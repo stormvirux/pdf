@@ -210,8 +210,5 @@ func sameFont(f1, f2 string) bool {
 }
 ```
 
-
-```
-
 ## Demo
 ![Run example](https://i.gyazo.com/01fbc539e9872593e0ff6bac7e954e6d.gif)
