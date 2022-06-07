@@ -2,7 +2,7 @@
 
 [![Built with WeBuild](https://raw.githubusercontent.com/webuild-community/badge/master/svg/WeBuild.svg)](https://webuild.community)
 
-A simple Go library which enables reading PDF files. Forked from https://github.com/rsc/pdf
+A simple Go library which enables reading PDF files. Forked from https://github.com/ledongthuc/pdf with changes from https://github.com/ledongthuc/pdf/pull/25
 
 Features
   - Get plain text content (without format)
@@ -132,6 +132,85 @@ func readPdf(path string) (string, error) {
 	}
 	return "", nil
 }
+```
+
+### Extracting text with interword spaces
+For more detailed explaination see detailed answer from ![rsc](https://github.com/rsc/pdf/issues/33#issuecomment-548369172). Something similar, has to be written for the spaces
+
+```
+func findWords(chars []pdf.Text) (words []pdf.Text) {
+	// Sort by Y coordinate and normalize.
+	const nudge = 1
+	sort.Sort(pdf.TextVertical(chars))
+	old := -100000.0
+	for i, c := range chars {
+		if c.Y != old && math.Abs(old-c.Y) < nudge {
+			chars[i].Y = old
+		} else {
+			old = c.Y
+		}
+	}
+
+	// Sort by Y coordinate, breaking ties with X.
+	// This will bring letters in a single word together.
+	sort.Sort(pdf.TextVertical(chars))
+
+	// Loop over chars.
+	for i := 0; i < len(chars); {
+		// Find all chars on line.
+		j := i + 1
+		for j < len(chars) && chars[j].Y == chars[i].Y {
+			j++
+		}
+		var end float64
+		// Split line into words (really, phrases).
+		for k := i; k < j; {
+			ck := &chars[k]
+			s := ck.S
+			end = ck.X + ck.W
+			charSpace := ck.FontSize / 6
+			wordSpace := ck.FontSize * 2 / 3
+			l := k + 1
+			for l < j {
+				// Grow word.
+				cl := &chars[l]
+				if sameFont(cl.Font, ck.Font) && math.Abs(cl.FontSize-ck.FontSize) < 0.1 && cl.X <= end+charSpace {
+					s += cl.S
+					end = cl.X + cl.W
+					l++
+					continue
+				}
+				// Add space to phrase before next word.
+				if sameFont(cl.Font, ck.Font) && math.Abs(cl.FontSize-ck.FontSize) < 0.1 && cl.X <= end+wordSpace {
+					s += " " + cl.S
+					end = cl.X + cl.W
+					l++
+					continue
+				}
+				break
+			}
+			f := ck.Font
+			f = strings.TrimSuffix(f, ",Italic")
+			f = strings.TrimSuffix(f, "-Italic")
+			words = append(words, pdf.Text{f, ck.FontSize, ck.X, ck.Y, end - ck.X, s})
+			k = l
+		}
+		i = j
+	}
+
+	return words
+}
+
+func sameFont(f1, f2 string) bool {
+	f1 = strings.TrimSuffix(f1, ",Italic")
+	f1 = strings.TrimSuffix(f1, "-Italic")
+	f2 = strings.TrimSuffix(f1, ",Italic")
+	f2 = strings.TrimSuffix(f1, "-Italic")
+	return strings.TrimSuffix(f1, ",Italic") == strings.TrimSuffix(f2, ",Italic") || f1 == "Symbol" || f2 == "Symbol" || f1 == "TimesNewRoman" || f2 == "TimesNewRoman"
+}
+```
+
+
 ```
 
 ## Demo
