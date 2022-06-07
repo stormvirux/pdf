@@ -118,7 +118,10 @@ Reading:
 			}
 		}
 		b.unreadToken(tok)
-		obj := b.readObject()
+		obj, err := b.readObject()
+		if err != nil {
+			return
+		}
 		stk.Push(Value{nil, objptr{}, obj})
 	}
 }
