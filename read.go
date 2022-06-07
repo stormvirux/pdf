@@ -201,6 +201,9 @@ func NewReaderEncrypted(f io.ReaderAt, size int64, pw func() string) (*Reader, e
 
 // Trailer returns the file's Trailer value.
 func (r *Reader) Trailer() Value {
+		if r == nil {
+		return Value{}
+	}
 	return Value{r, r.trailerptr, r.trailer}
 }
 
@@ -217,7 +220,10 @@ func readXref(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
 }
 
 func readXrefStream(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
-	obj1 := b.readObject()
+	obj1, err := b.readObject()
+	if err != nil {
+		return nil, objptr{}, nil, err
+	}
 	obj, ok := obj1.(objdef)
 	if !ok {
 		return nil, objptr{}, nil, fmt.Errorf("malformed PDF: cross-reference table not found: %v", objfmt(obj1))
@@ -236,7 +242,7 @@ func readXrefStream(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
 	}
 	table := make([]xref, size)
 
-	table, err := readXrefStreamData(r, strm, table, size)
+	table, err = readXrefStreamData(r, strm, table, size)
 	if err != nil {
 		return nil, objptr{}, nil, fmt.Errorf("malformed PDF: %v", err)
 	}
@@ -247,7 +253,10 @@ func readXrefStream(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
 			return nil, objptr{}, nil, fmt.Errorf("malformed PDF: xref Prev is not integer: %v", prevoff)
 		}
 		b := newBuffer(io.NewSectionReader(r.f, off, r.end-off), off)
-		obj1 := b.readObject()
+		obj1, err := b.readObject()
+		if err != nil {
+			return nil, objptr{}, nil, err
+		}
 		obj, ok := obj1.(objdef)
 		if !ok {
 			return nil, objptr{}, nil, fmt.Errorf("malformed PDF: xref prev stream not found: %v", objfmt(obj1))
@@ -366,7 +375,12 @@ func readXrefTable(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
 		return nil, objptr{}, nil, fmt.Errorf("malformed PDF: %v", err)
 	}
 
-	trailer, ok := b.readObject().(dict)
+	res, err := b.readObject()
+	if err != nil {
+		return nil, objptr{}, nil, err
+	}
+
+	trailer, ok := res.(dict)
 	if !ok {
 		return nil, objptr{}, nil, fmt.Errorf("malformed PDF: xref table not followed by trailer dictionary")
 	}
@@ -386,7 +400,11 @@ func readXrefTable(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
 			return nil, objptr{}, nil, fmt.Errorf("malformed PDF: %v", err)
 		}
 
-		trailer, ok := b.readObject().(dict)
+		res, err := b.readObject()
+		if err != nil {
+			return nil, objptr{}, nil, err
+		}
+		trailer, ok := res.(dict)
 		if !ok {
 			return nil, objptr{}, nil, fmt.Errorf("malformed PDF: xref Prev table not followed by trailer dictionary")
 		}
@@ -738,7 +756,7 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 		if xref.ptr != ptr || !xref.inStream && xref.offset == 0 {
 			return Value{}
 		}
-		var obj object
+		// var obj object
 		if xref.inStream {
 			strm := r.resolve(parent, xref.stream)
 		Search:
@@ -761,7 +779,10 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 					off, _ := b.readToken().(int64)
 					if uint32(id) == ptr.id {
 						b.seekForward(first + off)
-						x = b.readObject()
+						_, err := b.readObject()
+						if err != nil {
+							return Value{}
+						}
 						break Search
 					}
 				}
@@ -775,7 +796,10 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 			b := newBuffer(io.NewSectionReader(r.f, xref.offset, r.end-xref.offset), xref.offset)
 			b.key = r.key
 			b.useAES = r.useAES
-			obj = b.readObject()
+			obj, err := b.readObject()
+			if err != nil {
+				return Value{}
+			}
 			def, ok := obj.(objdef)
 			if !ok {
 				panic(fmt.Errorf("loading %v: found %T instead of objdef", ptr, obj))
@@ -795,7 +819,8 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 	case string:
 		return Value{r, parent, x}
 	default:
-		panic(fmt.Errorf("unexpected value type %T in resolve", x))
+		fmt.Sprintf("unexpected value type %T in resolve", x)
+		return Value{}
 	}
 }
 
