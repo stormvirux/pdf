@@ -83,6 +83,11 @@ func (b *buffer) errorf(format string, args ...interface{}) {
 }
 
 func (b *buffer) reload() bool {
+	defer func() {
+        	if r := recover(); r != nil {
+			fmt.Println("Recovered. Error:\n", r)
+        	}
+    	}()
 	n := cap(b.buf) - int(b.offset%int64(cap(b.buf)))
 	n, err := b.r.Read(b.buf[:n])
 	if n == 0 && err != nil {
@@ -93,6 +98,8 @@ func (b *buffer) reload() bool {
 			return false
 		}
 		b.errorf("malformed PDF: reading at offset %d: %v", b.offset, err)
+		
+
 		return false
 	}
 	b.offset += int64(n)
