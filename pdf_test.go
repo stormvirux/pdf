@@ -6,13 +6,14 @@ import (
 	"testing"
 )
 
-const testFile = "test2.pdf"
+const testFile = "test1.pdf"
 
 func TestReadPdf(t *testing.T) {
-	f, err := Open(testFile)
+	r, f, err := Open(testFile)
 	if err != nil {
 		t.Error("Doc should not be nil', got ", err)
 	}
+	defer r.Close()
 
 	totalPage := f.NumPage()
 	var buf bytes.Buffer
@@ -20,7 +21,7 @@ func TestReadPdf(t *testing.T) {
 	for pageIndex := 1; pageIndex <= totalPage; pageIndex++ {
 		p := f.Page(pageIndex)
 		if p.V.IsNull() {
-			continue
+			return
 		}
 
 		texts := p.Content().Text

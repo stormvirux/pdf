@@ -67,16 +67,22 @@ func (b *buffer) seek(offset int64) {
 	b.unread = b.unread[:0]
 }
 
-func (b *buffer) readByte() byte {
+func (b *buffer) readByte() (byte, error) {
 	if b.pos >= len(b.buf) {
-		b.reload()
+		rel, err := b.reload()
+		if err != nil {
+			return '\n', err
+		}
+		if !rel {
+			return '\n', err
+		}
 		if b.pos >= len(b.buf) {
-			return '\n'
+			return '\n', nil
 		}
 	}
 	c := b.buf[b.pos]
 	b.pos++
-	return c
+	return c, nil
 }
 
 func (b *buffer) errorf(format string, args ...interface{}) string {
@@ -98,8 +104,8 @@ func (b *buffer) reload() (bool, error) {
 			b.eof = true
 			return false, err
 		}
-		// b.errorf("malformed PDF: reading at offset %d: %v", b.offset, err)
-		fmt.Sprint(b.errorf("malformed PDF: reading at offset %d: %v", b.offset, err))
+		//b.errorf("malformed PDF: reading at offset %d: %v", b.offset, err)
+		fmt.Printf(b.errorf("malformed PDF: reading at offset %d: %v", b.offset, err))
 		return false, err
 	}
 	b.offset += int64(n)
@@ -144,16 +150,25 @@ func (b *buffer) readToken() token {
 	}
 
 	// Find first non-space, non-comment byte.
-	c := b.readByte()
+	c, err := b.readByte()
+	if err != nil {
+		return err
+	}
 	for {
 		if isSpace(c) {
 			if b.eof {
 				return io.EOF
 			}
-			c = b.readByte()
+			c, err = b.readByte()
+			if err != nil {
+				return err
+			}
 		} else if c == '%' {
 			for c != '\r' && c != '\n' {
-				c = b.readByte()
+				c, err = b.readByte()
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			break
@@ -162,7 +177,11 @@ func (b *buffer) readToken() token {
 
 	switch c {
 	case '<':
-		if b.readByte() == '<' {
+		d, err := b.readByte()
+		if err != nil {
+			return err
+		}
+		if d == '<' {
 			return keyword("<<")
 		}
 		b.unreadByte()
@@ -178,7 +197,11 @@ func (b *buffer) readToken() token {
 		return b.readName()
 
 	case '>':
-		if b.readByte() == '>' {
+		d, err := b.readByte()
+		if err != nil {
+			return err
+		}
+		if d == '>' {
 			return keyword(">>")
 		}
 		b.unreadByte()
@@ -198,7 +221,10 @@ func (b *buffer) readHexString() token {
 	tmp := b.tmp[:0]
 	for {
 	Loop:
-		c := b.readByte()
+		c, err := b.readByte()
+		if err != nil {
+			return err
+		}
 		if c == '>' {
 			break
 		}
@@ -206,13 +232,16 @@ func (b *buffer) readHexString() token {
 			goto Loop
 		}
 	Loop2:
-		c2 := b.readByte()
+		c2, err := b.readByte()
+		if err != nil {
+			return err
+		}
 		if isSpace(c2) {
 			goto Loop2
 		}
 		x := unhex(c)<<4 | unhex(c2)
 		if x < 0 {
-			fmt.Sprint(b.errorf("malformed hex string %c %c %s", c, c2, b.buf[b.pos:]))
+			fmt.Printf(b.errorf("malformed hex string %c %c %s", c, c2, b.buf[b.pos:]))
 			break
 		}
 		tmp = append(tmp, byte(x))
@@ -238,7 +267,10 @@ func (b *buffer) readLiteralString() token {
 	depth := 1
 Loop:
 	for !b.eof {
-		c := b.readByte()
+		c, err := b.readByte()
+		if err != nil {
+			return err
+		}
 		switch c {
 		default:
 			tmp = append(tmp, c)
@@ -251,9 +283,12 @@ Loop:
 			}
 			tmp = append(tmp, c)
 		case '\\':
-			switch c = b.readByte(); c {
+			switch c, err = b.readByte(); c {
 			default:
-				fmt.Sprint(b.errorf("invalid escape sequence \\%c", c))
+				if err != nil {
+					return err
+				}
+				fmt.Printf(b.errorf("invalid escape sequence \\%c", c))
 				tmp = append(tmp, '\\', c)
 			case 'n':
 				tmp = append(tmp, '\n')
@@ -268,7 +303,11 @@ Loop:
 			case '(', ')', '\\':
 				tmp = append(tmp, c)
 			case '\r':
-				if b.readByte() != '\n' {
+				d, err := b.readByte()
+				if err != nil {
+					return err
+				}
+				if d != '\n' {
 					b.unreadByte()
 				}
 				fallthrough
@@ -277,7 +316,10 @@ Loop:
 			case '0', '1', '2', '3', '4', '5', '6', '7':
 				x := int(c - '0')
 				for i := 0; i < 2; i++ {
-					c = b.readByte()
+					c, err = b.readByte()
+					if err != nil {
+						return err
+					}
 					if c < '0' || c > '7' {
 						b.unreadByte()
 						break
@@ -298,15 +340,23 @@ Loop:
 func (b *buffer) readName() token {
 	tmp := b.tmp[:0]
 	for {
-		c := b.readByte()
+		c, err := b.readByte()
+		if err != nil {
+			return err
+		}
 		if isDelim(c) || isSpace(c) {
 			b.unreadByte()
 			break
 		}
 		if c == '#' {
-			x := unhex(b.readByte())<<4 | unhex(b.readByte())
+			d, err1 := b.readByte()
+			e, err2 := b.readByte()
+			if err1 != nil || err2 != nil {
+				return err
+			}
+			x := unhex(d)<<4 | unhex(e)
 			if x < 0 {
-				fmt.Sprint(b.errorf("malformed name"))
+				fmt.Printf(b.errorf("malformed name"))
 			}
 			tmp = append(tmp, byte(x))
 			continue
@@ -320,7 +370,10 @@ func (b *buffer) readName() token {
 func (b *buffer) readKeyword() token {
 	tmp := b.tmp[:0]
 	for {
-		c := b.readByte()
+		c, err := b.readByte()
+		if err != nil {
+			return err
+		}
 		if isDelim(c) || isSpace(c) {
 			b.unreadByte()
 			break
@@ -337,13 +390,13 @@ func (b *buffer) readKeyword() token {
 	case isInteger(s):
 		x, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
-			fmt.Sprint(b.errorf("invalid integer %s", s))
+			fmt.Printf(b.errorf("invalid integer %s", s))
 		}
 		return x
 	case isReal(s):
 		x, err := strconv.ParseFloat(s, 64)
 		if err != nil {
-			fmt.Sprint(b.errorf("invalid integer %s", s))
+			fmt.Printf(b.errorf("invalid integer %s", s))
 		}
 		return x
 	}
@@ -460,7 +513,7 @@ func (b *buffer) readObject() (object, error) {
 				if _, ok := obj.(stream); !ok {
 					tok4 := b.readToken()
 					if tok4 != keyword("endobj") {
-						fmt.Sprint(b.errorf("missing endobj after indirect object definition"))
+						fmt.Printf(b.errorf("missing endobj after indirect object definition"))
 						b.unreadToken(tok4)
 					}
 				}
@@ -500,7 +553,7 @@ func (b *buffer) readDict() object {
 		}
 		n, ok := tok.(name)
 		if !ok {
-			fmt.Sprint(b.errorf("unexpected non-name key %T(%v) parsing dictionary", tok, tok))
+			fmt.Printf(b.errorf("unexpected non-name key %T(%v) parsing dictionary", tok, tok))
 			continue
 		}
 		res, err := b.readObject()
@@ -520,14 +573,27 @@ func (b *buffer) readDict() object {
 		return x
 	}
 
-	switch b.readByte() {
+	switch c, err := b.readByte(); c {
 	case '\r':
-		if b.readByte() != '\n' {
+		if err != nil {
+			return err
+		}
+		d, err := b.readByte()
+		if err != nil {
+			return err
+		}
+		if d != '\n' {
 			b.unreadByte()
 		}
 	case '\n':
+		if err != nil {
+			return err
+		}
 		// ok
 	default:
+		if err != nil {
+			return err
+		}
 		return b.errorf("stream keyword not followed by newline")
 	}
 

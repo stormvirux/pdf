@@ -7,6 +7,7 @@ package pdf
 import (
 	"fmt"
 	"io"
+	"reflect"
 )
 
 // A Stack represents a stack of values.
@@ -53,6 +54,9 @@ func newDict() Value {
 //
 func Interpret(strm Value, do func(stk *Stack, op string)) {
 	rd := strm.Reader()
+	//if rd != nil {
+	//	return
+	//}
 	b := newBuffer(rd, 0)
 	b.allowEOF = true
 	b.allowObjptr = false
@@ -62,6 +66,11 @@ func Interpret(strm Value, do func(stk *Stack, op string)) {
 Reading:
 	for {
 		tok := b.readToken()
+		//fmt.Println(reflect.TypeOf(tok).String())
+		//errorInterface := reflect.TypeOf((*error)(nil)).Elem()
+		if reflect.TypeOf(tok).String() == "*errors.errorString" {
+			break
+		}
 		if tok == io.EOF {
 			break
 		}

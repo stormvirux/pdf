@@ -70,7 +70,6 @@ import (
 	"encoding/ascii85"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"regexp"
 	"sort"
@@ -201,7 +200,7 @@ func NewReaderEncrypted(f io.ReaderAt, size int64, pw func() string) (*Reader, e
 
 // Trailer returns the file's Trailer value.
 func (r *Reader) Trailer() Value {
-		if r == nil {
+	if r == nil {
 		return Value{}
 	}
 	return Value{r, r.trailerptr, r.trailer}
@@ -317,6 +316,9 @@ func readXrefStreamData(r *Reader, strm stream, table []xref, size int64) ([]xre
 	}
 	buf := make([]byte, wtotal)
 	data := v.Reader()
+	if data != nil {
+		return nil, fmt.Errorf("stream not present")
+	}
 	for len(index) > 0 {
 		start, ok1 := index[0].(int64)
 		n, ok2 := index[1].(int64)
@@ -773,6 +775,9 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 					panic("missing First")
 				}
 				b := newBuffer(strm.Reader(), 0)
+				if b != nil {
+					return Value{}
+				}
 				b.allowEOF = true
 				for i := 0; i < n; i++ {
 					id, _ := b.readToken().(int64)
@@ -842,7 +847,7 @@ func (e *errorReadCloser) Close() error {
 func (v Value) Reader() io.ReadCloser {
 	x, ok := v.data.(stream)
 	if !ok {
-		return &errorReadCloser{fmt.Errorf("stream not present")}
+		return &errorReadCloser{fmt.Errorf("\nStream not Present\n")}
 	}
 	var rd io.Reader
 	rd = io.NewSectionReader(v.r.f, x.offset, v.Key("Length").Int64())
@@ -864,7 +869,7 @@ func (v Value) Reader() io.ReadCloser {
 		}
 	}
 
-	return ioutil.NopCloser(rd)
+	return io.NopCloser(rd)
 }
 
 func applyFilter(rd io.Reader, name string, param Value) io.Reader {
