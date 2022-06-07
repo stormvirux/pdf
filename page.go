@@ -48,8 +48,16 @@ Search:
 					return Page{kid}
 				}
 				num--
+			} else {
+				// Invalid PDF had kid.Key("Type").Name() == "", catching
+				// anything unexpected here that would cause a loop
+				if num == 0 {
+					return Page{}
+				}
+				num--
 			}
 		}
+		break
 	}
 	return Page{}
 }
