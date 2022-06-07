@@ -7,6 +7,7 @@
 package pdf
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -84,10 +85,10 @@ func (b *buffer) errorf(format string, args ...interface{}) string {
 
 func (b *buffer) reload() (bool, error) {
 	defer func() {
-        	if r := recover(); r != nil {
+		if r := recover(); r != nil {
 			fmt.Println("Recovered. Error:\n", r)
-        	}
-    	}()
+		}
+	}()
 	n := cap(b.buf) - int(b.offset%int64(cap(b.buf)))
 	n, err := b.r.Read(b.buf[:n])
 	if n == 0 && err != nil {
@@ -107,7 +108,7 @@ func (b *buffer) reload() (bool, error) {
 	return true, err
 }
 
-func (b *buffer) seekForward(offset int64) (err error){
+func (b *buffer) seekForward(offset int64) (err error) {
 	for b.offset < offset {
 		rel, err := b.reload()
 		if err != nil {
@@ -448,7 +449,7 @@ func (b *buffer) readObject() (object, error) {
 			tok3 := b.readToken()
 			switch tok3 {
 			case keyword("R"):
-				return objptr{uint32(t1), uint16(t2)},nil
+				return objptr{uint32(t1), uint16(t2)}, nil
 			case keyword("obj"):
 				old := b.objptr
 				b.objptr = objptr{uint32(t1), uint16(t2)}
@@ -465,7 +466,7 @@ func (b *buffer) readObject() (object, error) {
 				}
 				b.objptr = old
 				return objdef{objptr{uint32(t1), uint16(t2)}, obj}, err
-		
+			}
 			b.unreadToken(tok3)
 		}
 		b.unreadToken(tok2)
@@ -502,7 +503,11 @@ func (b *buffer) readDict() object {
 			fmt.Sprint(b.errorf("unexpected non-name key %T(%v) parsing dictionary", tok, tok))
 			continue
 		}
-		x[n] = b.readObject()
+		res, err := b.readObject()
+		if err != nil {
+			return nil
+		}
+		x[n] = res
 	}
 
 	if !b.allowStream {
