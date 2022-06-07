@@ -78,11 +78,11 @@ func (b *buffer) readByte() byte {
 	return c
 }
 
-func (b *buffer) errorf(format string, args ...interface{}) {
-	panic(fmt.Errorf(format, args...))
+func (b *buffer) errorf(format string, args ...interface{}) string {
+	return fmt.Sprintf(format, args...)
 }
 
-func (b *buffer) reload() bool {
+func (b *buffer) reload() (bool, error) {
 	defer func() {
         	if r := recover(); r != nil {
 			fmt.Println("Recovered. Error:\n", r)
@@ -95,26 +95,30 @@ func (b *buffer) reload() bool {
 		b.pos = 0
 		if b.allowEOF && err == io.EOF {
 			b.eof = true
-			return false
+			return false, err
 		}
-		b.errorf("malformed PDF: reading at offset %d: %v", b.offset, err)
-		
-
-		return false
+		// b.errorf("malformed PDF: reading at offset %d: %v", b.offset, err)
+		fmt.Sprint(b.errorf("malformed PDF: reading at offset %d: %v", b.offset, err))
+		return false, err
 	}
 	b.offset += int64(n)
 	b.buf = b.buf[:n]
 	b.pos = 0
-	return true
+	return true, err
 }
 
-func (b *buffer) seekForward(offset int64) {
+func (b *buffer) seekForward(offset int64) (err error){
 	for b.offset < offset {
-		if !b.reload() {
-			return
+		rel, err := b.reload()
+		if err != nil {
+			return err
+		}
+		if !rel {
+			return err
 		}
 	}
 	b.pos = len(b.buf) - int(b.offset-offset)
+	return err
 }
 
 func (b *buffer) readOffset() int64 {
@@ -167,7 +171,7 @@ func (b *buffer) readToken() token {
 		return b.readLiteralString()
 
 	case '[', ']', '{', '}':
-		return keyword(string(c))
+		return keyword(c)
 
 	case '/':
 		return b.readName()
@@ -181,8 +185,8 @@ func (b *buffer) readToken() token {
 
 	default:
 		if isDelim(c) {
-			b.errorf("unexpected delimiter %#q", rune(c))
-			return nil
+			return b.errorf("unexpected delimiter %#q", rune(c))
+			// return nil
 		}
 		b.unreadByte()
 		return b.readKeyword()
@@ -207,7 +211,7 @@ func (b *buffer) readHexString() token {
 		}
 		x := unhex(c)<<4 | unhex(c2)
 		if x < 0 {
-			b.errorf("malformed hex string %c %c %s", c, c2, b.buf[b.pos:])
+			fmt.Sprint(b.errorf("malformed hex string %c %c %s", c, c2, b.buf[b.pos:]))
 			break
 		}
 		tmp = append(tmp, byte(x))
@@ -248,7 +252,7 @@ Loop:
 		case '\\':
 			switch c = b.readByte(); c {
 			default:
-				b.errorf("invalid escape sequence \\%c", c)
+				fmt.Sprint(b.errorf("invalid escape sequence \\%c", c))
 				tmp = append(tmp, '\\', c)
 			case 'n':
 				tmp = append(tmp, '\n')
@@ -301,7 +305,7 @@ func (b *buffer) readName() token {
 		if c == '#' {
 			x := unhex(b.readByte())<<4 | unhex(b.readByte())
 			if x < 0 {
-				b.errorf("malformed name")
+				fmt.Sprint(b.errorf("malformed name"))
 			}
 			tmp = append(tmp, byte(x))
 			continue
@@ -332,13 +336,13 @@ func (b *buffer) readKeyword() token {
 	case isInteger(s):
 		x, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
-			b.errorf("invalid integer %s", s)
+			fmt.Sprint(b.errorf("invalid integer %s", s))
 		}
 		return x
 	case isReal(s):
 		x, err := strconv.ParseFloat(s, 64)
 		if err != nil {
-			b.errorf("invalid real %s", s)
+			fmt.Sprint(b.errorf("invalid integer %s", s))
 		}
 		return x
 	}
@@ -416,19 +420,18 @@ type objdef struct {
 	obj object
 }
 
-func (b *buffer) readObject() object {
+func (b *buffer) readObject() (object, error) {
 	tok := b.readToken()
 	if kw, ok := tok.(keyword); ok {
 		switch kw {
 		case "null":
-			return nil
+			return nil, nil
 		case "<<":
-			return b.readDict()
+			return b.readDict(), nil
 		case "[":
-			return b.readArray()
+			return b.readArray(), nil
 		}
-		b.errorf("unexpected keyword %q parsing object", kw)
-		return nil
+		return nil, errors.New(b.errorf("unexpected keyword %q parsing object", kw))
 	}
 
 	if str, ok := tok.(string); ok && b.key != nil && b.objptr.id != 0 {
@@ -436,7 +439,7 @@ func (b *buffer) readObject() object {
 	}
 
 	if !b.allowObjptr {
-		return tok
+		return tok, nil
 	}
 
 	if t1, ok := tok.(int64); ok && int64(uint32(t1)) == t1 {
@@ -445,26 +448,29 @@ func (b *buffer) readObject() object {
 			tok3 := b.readToken()
 			switch tok3 {
 			case keyword("R"):
-				return objptr{uint32(t1), uint16(t2)}
+				return objptr{uint32(t1), uint16(t2)},nil
 			case keyword("obj"):
 				old := b.objptr
 				b.objptr = objptr{uint32(t1), uint16(t2)}
-				obj := b.readObject()
+				obj, err := b.readObject()
+				if err != nil {
+					return nil, err
+				}
 				if _, ok := obj.(stream); !ok {
 					tok4 := b.readToken()
 					if tok4 != keyword("endobj") {
-						b.errorf("missing endobj after indirect object definition")
+						fmt.Sprint(b.errorf("missing endobj after indirect object definition"))
 						b.unreadToken(tok4)
 					}
 				}
 				b.objptr = old
-				return objdef{objptr{uint32(t1), uint16(t2)}, obj}
-			}
+				return objdef{objptr{uint32(t1), uint16(t2)}, obj}, err
+		
 			b.unreadToken(tok3)
 		}
 		b.unreadToken(tok2)
 	}
-	return tok
+	return tok, nil
 }
 
 func (b *buffer) readArray() object {
@@ -475,7 +481,11 @@ func (b *buffer) readArray() object {
 			break
 		}
 		b.unreadToken(tok)
-		x = append(x, b.readObject())
+		res, err := b.readObject()
+		if err != nil {
+			return err
+		}
+		x = append(x, res)
 	}
 	return x
 }
@@ -489,7 +499,7 @@ func (b *buffer) readDict() object {
 		}
 		n, ok := tok.(name)
 		if !ok {
-			b.errorf("unexpected non-name key %T(%v) parsing dictionary", tok, tok)
+			fmt.Sprint(b.errorf("unexpected non-name key %T(%v) parsing dictionary", tok, tok))
 			continue
 		}
 		x[n] = b.readObject()
@@ -513,7 +523,7 @@ func (b *buffer) readDict() object {
 	case '\n':
 		// ok
 	default:
-		b.errorf("stream keyword not followed by newline")
+		return b.errorf("stream keyword not followed by newline")
 	}
 
 	return stream{x, b.objptr, b.readOffset()}
